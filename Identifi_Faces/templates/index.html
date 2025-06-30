@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Nhận diện khuôn mặt</title>
+    <style>
+        body {
+            font-family: Arial;
+            background: #f4f4f4;
+            padding: 20px;
+        }
+
+        h1 {
+            color: #333;
+        }
+
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            width: 600px;
+        }
+
+        video, #uploadedImage {
+            width: 100%;
+            border: 1px solid #ccc;
+            margin-top: 10px;
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        .result {
+            margin-top: 15px;
+            padding: 10px;
+            background: #e8f0fe;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            font-family: monospace;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        #imageContainer {
+            position: relative;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Nhận diện khuôn mặt</h1>
+    <h3>Nhận diện ảnh tải lên:</h3>
+    <input type="file" id="imageUpload" accept="image/*">
+    <button onclick="uploadImage()">Nhận diện ảnh</button>
+
+    <h3>Nhận diện webcam:</h3>
+    <button onclick="startWebcam()">Bật Webcam</button>
+    <button onclick="stopWebcam()">Tắt Webcam</button>
+    <button id="saveFaceBtn" class="hidden" onclick="saveNewFace()">Lưu khuôn mặt mới</button>
+
+    <div id="imageContainer">
+        <video id="video" autoplay muted></video>
+        <img id="uploadedImage" class="hidden">
+        <canvas id="overlay"></canvas>
+    </div>
+
+    <div class="result" id="result">Chưa có kết quả nhận diện.</div>
+</div>
+
+<script>
+    let video = document.getElementById('video');
+    let uploadedImage = document.getElementById('uploadedImage');
+    let overlay = document.getElementById('overlay');
+    let resultDiv = document.getElementById('result');
+    let webcamStream = null;
+    let webcamInterval = null;
+    let isProcessing = false;
+    let lastUnknownEncoding = null;
+
+    // Nhận diện ảnh tải lên
+    async function uploadImage() {
+        const fileInput = document.getElementById('imageUpload');
+        const file = fileInput.files[0];
+        if (!file) return alert("Vui lòng chọn ảnh.");
+
+        const formData = new FormData();
+        formData.append('image', file);
+        resultDiv.innerHTML = "Đang xử lý ảnh...";
+
+        const res = await fetch('/recognize_image', {method: 'POST', body: formData});
+        const data = await res.json();
+        if (data.results.length === 0) {
+            resultDiv.innerHTML = "Không tìm thấy khuôn mặt nào.";
+        } else {
+            resultDiv.innerHTML = JSON.stringify(data.results || data, null, 2);
+        }
+        const reader = new FileReader();
+        reader.onload = function (e) {
+            uploadedImage.src = e.target.result;
+            uploadedImage.classList.remove('hidden');
+            video.classList.add('hidden');
+        };
+        reader.readAsDataURL(file);
+    }
+
+
+    // Nhận diện webcam
+    async function startWebcam() {
+        webcamStream = await navigator.mediaDevices.getUserMedia({video: true});
+        video.srcObject = webcamStream;
+        video.classList.remove('hidden');
+        uploadedImage.classList.add('hidden');
+        resultDiv.innerHTML = "Đang nhận diện từ webcam...";
+        document.getElementById('saveFaceBtn').classList.add('hidden');
+
+        if (webcamInterval) clearInterval(webcamInterval);
+        webcamInterval = setInterval(captureAndSend, 1500);
+    }
+
+    function stopWebcam() {
+        if (webcamStream) {
+            webcamStream.getTracks().forEach(track => track.stop());
+            video.srcObject = null;
+        }
+        if (webcamInterval) {
+            clearInterval(webcamInterval);
+            webcamInterval = null;
+        }
+        resultDiv.innerHTML = "Đã tắt webcam.";
+
+        // 👇 Nếu có Unknown face => hiện prompt để lưu ngay
+        if (lastUnknownEncoding) {
+            const name = prompt("Phát hiện khuôn mặt chưa biết. Nhập tên để lưu:");
+            if (name) {
+                saveFaceToServer(name, lastUnknownEncoding);
+            }
+            lastUnknownEncoding = null;
+        }
+    }
+
+
+   async function captureAndSend() {
+    if (!video.srcObject || isProcessing) return;
+    isProcessing = true;
+
+    overlay.width = video.videoWidth;
+    overlay.height = video.videoHeight;
+    const ctx = overlay.getContext('2d');
+    ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+    const canvasTemp = document.createElement('canvas');
+    canvasTemp.width = video.videoWidth;
+    canvasTemp.height = video.videoHeight;
+    const tempCtx = canvasTemp.getContext('2d');
+    tempCtx.drawImage(video, 0, 0);
+    const dataURL = canvasTemp.toDataURL('image/jpeg');
+
+    try {
+        const res = await fetch('/recognize_webcam', {
+            method: 'POST',
+            body: JSON.stringify({ image: dataURL }),
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
+        resultDiv.innerHTML = JSON.stringify(data.results || data, null, 2);
+
+        lastUnknownEncoding = null;
+
+        if (data.results && data.results.length > 0) {
+            data.results.forEach(face => {
+                const [top, right, bottom, left] = face.location;
+                const name = face.name;
+
+                // Vẽ khung vuông
+                ctx.strokeStyle = 'red';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(left, top, right - left, bottom - top);
+
+                // Vẽ nhãn tên
+                ctx.fillStyle = 'red';
+                ctx.font = '16px Arial';
+                ctx.fillText(name, left, top - 5);
+
+                if (name === "Unknown" && face.encoding) {
+                    lastUnknownEncoding = face.encoding;
+                }
+            });
+        }
+    } catch (error) {
+        resultDiv.innerHTML = "Lỗi: " + error.message;
+    } finally {
+        isProcessing = false;
+    }
+}
+
+
+    async function saveFaceToServer(name, encoding) {
+        const res = await fetch('/save_face', {
+            method: 'POST',
+            body: JSON.stringify({name, encoding}),
+            headers: {'Content-Type': 'application/json'}
+        });
+        const data = await res.json();
+        alert(data.message || "Đã lưu khuôn mặt mới.");
+        document.getElementById('saveFaceBtn').classList.add('hidden');
+    }
+</script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Face Recognition App</title>
+</head>
+<body>
+    <h1>Nhận diện khuôn mặt</h1>
+    <input type="file" id="imageUpload" accept="image/*">
+    <button onclick="uploadImage()">Nhận diện ảnh</button>
+    <br><br>
+    <button onclick="startWebcam()">Bật Webcam (Tạm thời)</button>
+    <br><br>
+    <div id="result"></div>
+
+    <script>
+        async function uploadImage() {
+            const fileInput = document.getElementById('imageUpload');
+            if (!fileInput.files.length) {
+                alert("Vui lòng chọn ảnh");
+                return;
+            }
+            const formData = new FormData();
+            formData.append('image', fileInput.files[0]);
+            const res = await fetch('http://localhost:5000/recognize_image', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await res.json();
+            document.getElementById('result').innerText = JSON.stringify(data, null, 2);
+        }
+
+        function startWebcam() {
+            alert("Tạm thời chưa có chức năng webcam. Sẽ thêm sau!");
+        }
+    </script>
+</body>
+</html>

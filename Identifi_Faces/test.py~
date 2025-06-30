@@ -1,0 +1,7 @@
+import dlib
+import numpy as np
+import face_recognition
+test_img = np.zeros((100, 100, 3), dtype=np.uint8)
+detector = dlib.get_frontal_face_detector()
+faces = detector(test_img)
+print("✅ dlib OK, nhận ảnh RGB")

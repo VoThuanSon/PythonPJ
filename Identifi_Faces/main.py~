@@ -1,0 +1,107 @@
+import cv2
+import face_recognition
+import numpy as np
+from db import init_db, load_known_faces, save_face
+
+# Khởi tạo database, load khuôn mặt đã biết từ cơ sở dữ liệu
+init_db()
+known_names, known_encodings = load_known_faces()
+
+# Tên cửa sổ hiển thị video
+window_name = 'Face Recognition'
+cv2.namedWindow(window_name)  # Tạo cửa sổ hiển thị (bắt buộc nếu dùng getWindowProperty)
+
+# Mở webcam
+video_capture = cv2.VideoCapture(0)
+
+print("Nhấn 'q' để thoát, nhấn 's' để lưu khuôn mặt mới.")
+
+
+def recognize_faces_in_frame(frame, known_names, known_encodings):
+    # Resize và chuyển màu
+    small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
+    rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+    rgb_small_frame = np.ascontiguousarray(rgb_small_frame, dtype=np.uint8)
+
+    face_locations = face_recognition.face_locations(rgb_small_frame)
+    face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
+
+    results = []
+    for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
+        matches = face_recognition.compare_faces(known_encodings, face_encoding)
+        name = "Unknown"
+        if True in matches:
+            match_index = matches.index(True)
+            name = known_names[match_index]
+        results.append({
+            'name': name,
+            'location': (top * 4, right * 4, bottom * 4, left * 4),
+            'encoding': face_encoding
+        })
+    return results
+
+
+while True:
+    # Đọc một frame từ camera
+    ret, frame = video_capture.read()
+    if not ret:
+        continue
+
+    # Thu nhỏ frame để xử lý nhanh hơn (1/4 kích thước)
+    small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
+
+    # Chuyển màu BGR sang RGB để dùng với face_recognition
+    rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+    rgb_small_frame = np.ascontiguousarray(rgb_small_frame, dtype=np.uint8)
+
+    # Phát hiện vị trí và mã hóa khuôn mặt trong frame
+    face_locations = face_recognition.face_locations(rgb_small_frame)
+    face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
+
+    # Duyệt qua từng khuôn mặt phát hiện được
+    for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
+        matches = face_recognition.compare_faces(known_encodings, face_encoding)
+        name = "Unknown"
+
+        if True in matches:
+            match_index = matches.index(True)
+            name = known_names[match_index]  # Gán tên tương ứng nếu khớp
+        else:
+            name = "Unknown"
+
+        # Scale lại tọa độ (do ban đầu thu nhỏ ảnh) và vẽ khung + tên
+        top *= 4
+        right *= 4
+        bottom *= 4
+        left *= 4
+        cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
+        cv2.putText(frame, name, (left, top - 10), cv2.FONT_HERSHEY_DUPLEX, 0.8, (255, 255, 255), 1)
+
+    # Hiển thị frame, kiểm tra nếu lỗi do cửa sổ đã đóng thì thoát
+    try:
+        cv2.imshow(window_name, frame)
+    except cv2.error as e:
+        print("Cửa sổ đã bị đóng.")
+        break
+
+    # Kiểm tra người dùng bấm nút ❌ (đóng cửa sổ)
+    key = cv2.waitKey(1)
+    if key == -1 and cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
+        print("Đóng cửa sổ.")
+        break
+
+    # Thoát khi nhấn phím 'q'
+    if key == ord('q'):
+        break
+
+    # Nếu nhấn 's' thì lưu khuôn mặt mới
+    elif key == ord('s') and face_encodings:
+        new_name = input("Nhập tên người mới: ")
+        save_face(new_name, face_encodings[0])
+        known_names.append(new_name)
+        known_encodings.append(face_encodings[0])
+        print(f"Đã lưu khuôn mặt: {new_name}")
+
+# Giải phóng camera và đóng cửa sổ
+video_capture.release()
+cv2.destroyAllWindows()
